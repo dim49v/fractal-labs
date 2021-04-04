@@ -1,0 +1,218 @@
+﻿using Emgu.CV;
+using Emgu.CV.Structure;
+using NPlot;
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace Lab1
+{
+    public partial class Form6 : Form
+    {
+        const int Delta = 20;
+        const int IMG_SIZE = 1024;
+        string filename;
+        double[] xi;
+        double[] yi;
+        double[,] volume;
+        double[] area;
+        double[,,] u;
+        double[,,] b;
+        int size = 8;
+        int gridSize;
+        public Form6()
+        {
+            InitializeComponent();
+        }
+
+        private void loadImage()
+        {
+            Bitmap bmp;
+            try
+            {
+                bmp = new Bitmap(filename);
+            }
+            catch (Exception exception)
+            {
+                label1.Text = "Load error";
+                return;
+            }
+            if (panel1.BackgroundImage != null)
+            {
+                panel1.BackgroundImage.Dispose();
+            }
+            panel1.BackgroundImage = bmp;
+            Plot();
+        }
+
+        private void Plot()
+        {
+            Mat mat = CvInvoke.Imread(filename);
+            Size trueImgSize = mat.Size;
+            CvInvoke.Resize(mat, mat, new Size(IMG_SIZE, IMG_SIZE));
+            Image<Gray, Byte> img1 = mat.ToImage<Gray, Byte>();
+            gridSize = IMG_SIZE / size;
+            volume = new double[gridSize * gridSize, Delta + 1];
+            area = new double[Delta - 1];
+            xi = new double[Delta - 1];
+            yi = new double[Delta - 1];
+            u = new double[gridSize * gridSize, (size + 2) * (size + 2), Delta + 1];
+            b = new double[gridSize * gridSize, (size + 2) * (size + 2), Delta + 1];
+            int pixel;
+            double s;
+            for (int cell = 0; cell < gridSize * gridSize; cell++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    for (int y = 0; y < size; y++)
+                    {
+                        pixel = img1.Data[(cell / gridSize) * size + x, (cell % gridSize) * size + y, 0];
+                        u[cell, (x + 1) * size + y + 1, 0] = pixel;
+                        b[cell, (x + 1) * size + y + 1, 0] = pixel;
+                    }
+                }
+                // рамка вокруг сегмента
+                for (int x = 0; x < size + 2; x++)
+                {
+                    u[cell, x * size, 0] = 0;
+                    u[cell, x * size + size + 2, 0] = 0;
+                    u[cell, x, 0] = 0;
+                    u[cell, (size + 2) * size + x, 0] = 0;
+                    b[cell, x * size, 0] = 300;
+                    b[cell, x * size + size + 2, 0] = 300;
+                    b[cell, x, 0] = 300;
+                    b[cell, (size + 2) * size + x, 0] = 300;
+                }
+            }
+            for (int delta = 1; delta <= Delta; delta++)
+            {
+                setU(delta);
+                setB(delta);
+                for (int cell = 0; cell < gridSize * gridSize; cell++)
+                {
+                    s = 0;
+                    for (int x = 1; x <= size; x++)
+                    {
+                        for (int y = 1; y <= size; y++)
+                        {
+                            s += u[cell, x * size + y, delta] - b[cell, x * size + y, delta];
+                        }
+                    }
+                    volume[cell, delta] = s;
+                    if (delta > 1)
+                    {
+                        area[delta - 2] += (volume[cell, delta] - volume[cell, delta - 1]) / 2;
+                    }
+                }
+            }       
+            for (int i = 2; i <= Delta; i++)
+            {
+                xi[i - 2] = i;
+                yi[i - 2] = Math.Log(area[i - 2]) / Math.Log(i);
+            }
+
+            // график
+
+            NPlot.Bitmap.PlotSurface2D npSurface = new NPlot.Bitmap.PlotSurface2D(500, 400);
+            NPlot.LinePlot npPlot1 = new LinePlot();
+            npSurface.Clear();
+
+            //Font TitleFont = new Font("Arial", 12);
+            Font AxisFont = new Font("Arial", 10);
+            Font TickFont = new Font("Arial", 8);
+
+            NPlot.Grid p = new Grid();
+            npSurface.Add(p, NPlot.PlotSurface2D.XAxisPosition.Bottom,
+                          NPlot.PlotSurface2D.YAxisPosition.Left);
+
+            npPlot1.AbscissaData = xi;
+            npPlot1.DataSource = yi;
+            npPlot1.Color = System.Drawing.Color.Blue;
+            npSurface.Add(npPlot1, NPlot.PlotSurface2D.XAxisPosition.Bottom,
+                          NPlot.PlotSurface2D.YAxisPosition.Left);
+
+            npSurface.XAxis1.Label = "Delta";
+            npSurface.XAxis1.LabelFont = AxisFont;
+            npSurface.XAxis1.TickTextFont = TickFont;
+            npSurface.AutoScaleAutoGeneratedAxes = true;
+
+            npSurface.YAxis1.Label = "ln(A)/ln(delta)";
+            npSurface.YAxis1.LabelFont = AxisFont;
+            npSurface.YAxis1.TickTextFont = TickFont;
+
+            npSurface.Refresh();      
+            if (panel2.BackgroundImage != null)
+            {
+                panel2.BackgroundImage.Dispose();
+            }
+            npSurface.Bitmap.Save("plot6.png");
+            npSurface.Clear();
+            Bitmap bmp = new Bitmap("plot6.png");
+            panel2.BackgroundImage = bmp;
+        }
+
+        private void setB(int delta)
+        {
+            for (int cell = 0; cell < gridSize * gridSize; cell++)
+            {
+                for (int x = 1; x <= size; x++)
+                {
+                    for (int y = 1; y <= size; y++)
+                    {
+                        b[cell, x * size + y, delta] = Math.Min(
+                            b[cell, x * size + y, delta - 1] - 1,
+                            Math.Min(
+                                Math.Min(
+                                    b[cell, (x - 1) * size + y, delta - 1],
+                                    b[cell, x * size + (y - 1), delta - 1]
+                                ),
+                                Math.Min(
+                                    b[cell, (x + 1) * size + y, delta - 1],
+                                    b[cell, x * size + (y + 1), delta - 1]
+                                )
+                            )
+                        );
+                    }
+                }
+            }
+        }
+        private void setU(int delta)
+        {
+            for (int cell = 0; cell < gridSize * gridSize; cell++)
+            {
+                for (int x = 1; x <= size; x++)
+                {
+                    for (int y = 1; y <= size; y++)
+                    {
+                        u[cell, x * size + y, delta] = Math.Max(
+                            b[cell, x * size + y, delta - 1] + 1,
+                            Math.Max(
+                                Math.Max(
+                                    u[cell, (x - 1) * size + y, delta - 1],
+                                    u[cell, x * size + (y - 1), delta - 1]
+                                ),
+                                Math.Max(
+                                    u[cell, (x + 1) * size + y, delta - 1],
+                                    u[cell, x * size + (y + 1), delta - 1]
+                                )
+                            )
+                        );
+                    }
+                }
+            }
+        }
+
+        private void button1_Click(object sender, EventArgs e)
+        {
+            filename = textBox1.Text;
+            loadImage();
+        }
+    }
+}
